@@ -55,8 +55,11 @@ typedef unsigned int uint32_t;
 #include <qusec.h>                       /* Qus_EC_t */
 #include <qmhsndpm.h>                    /* QMHSNDPM */
 #include <qtqiconv.h>                    /* EBCDIC <=> ASCII conversion */
+#if __ILEC400_TGTVRM__ >= 430
 #include <qp0ztrc.h>                     /* Qp0zLprintf() */
-
+#else
+int  Qp0zLprintf (char *format, ...);    /* Not officially included in V3R2 */
+#endif
 #define ssprintf Qp0zLprintf             /* Write to job log. */
 
 #else
