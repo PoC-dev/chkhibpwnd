@@ -48,7 +48,7 @@ To run on OS/400, some infrastructure must be provided.
 ```
 - A REXX script has been provided to create the OS/400 objects. Run it:
 ```
-     strrexprc srcfile(srclib/chkhibpwnd) srcmbr(compile)
+     strrexprc srcfile(qgpl/chkhibpwnd) srcmbr(compile)
 ```
 - Now you can run it as any other command:
 ```
