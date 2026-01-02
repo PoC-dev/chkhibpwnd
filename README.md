@@ -1,4 +1,4 @@
-This is source code for *chkhibpwnd*, an application to query the *Have I Been Pwned API* if a password has been leaked. It is written to be compilable with compilers on ancient operating systems in general, but its main target is OS/400. It has been tested to compile and work on OS/400 V4R5, and Debian 12 Linux. Error reporting is not extensively tested, yet.
+This is source code for *chkhibpwnd*, an application to query the *Have I Been Pwned API* if a password has been leaked. Its main target is OS/400. It has been tested to compile and work on OS/400 V4R5. Error reporting is not extensively tested, yet.
 
 *Chkhibpwnd* can be found on [GitHub](https://github.com/PoC-dev/chkhibpwnd).
 
@@ -26,18 +26,8 @@ http://192.168.0.1:3128
 
 Volunteers implementing IBM i support for QC3CALHA (Calculate Hashes), and TLS e. g. through GSKit for newer OS releases are invited to submit pull requests.
 
-#### Linux
-To run on Linux, just compile after cloning the repository, and run it with the password to be tested as parameter:
-```
-     cc -Wall -o chkhibpwnd chkhibpwnd.c
-     ./chkhibpwnd test
-```
-Depending on feedback from the API, one of two possible answers are printed on *stdout*:
-- Password has been pwned.
-- Password not found in database.
-
-#### AS/400
-To run on OS/400, some infrastructure must be provided.
+#### Compilation and using
+Some infrastructure must be provided.
 - Create the source PF:
 ```
      crtsrcpf qgpl/chkhibpwnd
@@ -61,4 +51,4 @@ Depending on feedback from the API, one of two possible answers are printed in t
 - Password not found in database.
 
 ----
-2025-12-31 poc@pocnet.net
+2026-01-02 poc@pocnet.net

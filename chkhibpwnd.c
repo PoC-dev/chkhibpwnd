@@ -21,20 +21,18 @@
  * http://www.gnu.org/licenses/gpl.html
  *
  * This C application uses only standard C library functions to talk to the
- * api.pwnedpasswords.com API server. This makes it easy to compile the program
- * even on older operating systems. Unfortunately, the API server refuses plain
- * text connections on port 80, and implementing TLS completely seems a bit over
- * the top. Hence we rely on the http_proxy (or HTTP_PROXY) environment variable
- * to provide a http proxy which terminates the TLS session on our behalf.
+ * api.pwnedpasswords.com API server. Unfortunately, the API server refuses
+ * plain text connections on port 80, and implementing TLS completely seems a
+ * bit over the top. Hence we rely on the HTTP_PROXY environment variable to
+ * provide a http proxy which terminates the TLS session on our behalf.
  *
- * Currently the code has been tested on Linux and stone age OS/400 V4R5.
- * OS/400 specific stuff is automatically recognized by the __ILEC400__ macro.
- * It is set by the ILE C compiler.
+ * Currently the code has been tested on stone age OS/400 V4R5.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <ctype.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -42,22 +40,11 @@
 #include <netdb.h>
 #include <errno.h>
 
-/* FIXME: Come up with an unified method of providing textual information to
- * the user, in turn retaining contextual information. Expand sendMsg?
- */
-
-#ifdef __ILEC400__
 /* OS/400 specific defines. */
 typedef unsigned int uint32_t;
 #include <qusec.h>                       /* Qus_EC_t */
 #include <qmhsndpm.h>                    /* QMHSNDPM */
 #include <qtqiconv.h>                    /* EBCDIC <=> ASCII conversion */
-
-#else
-/* For Linux and other unix lookalikes. */
-#include <stdint.h>
-
-#endif
 
 /*------------------------------------------------------------------------------
  * Defines and global vars.
@@ -69,10 +56,8 @@ typedef unsigned int uint32_t;
 #define REQUEST_SIZE 256
 
 /* Global variables, so we can easily iconv anywhere in our code. */
-#ifdef __ILEC400__
 iconv_t a_e_ccsid;
 iconv_t e_a_ccsid;
-#endif
 
 /*------------------------------------------------------------------------------
  * SHA-1 implementation - RFC 3174.
@@ -223,8 +208,6 @@ void bin2hex(unsigned char *bin, char *hex, int len) {
     hex[len * 2] = '\0';
 }
 
-#ifdef __ILEC400__
-
 /*------------------------------------------------------------------------------
  * Zero-terminate fixed-length strings.
  */
@@ -275,8 +258,7 @@ int convert_buffer(char *srcBuf, char *dstBuf, int srcBufLen, int dstBufLen,
 }
 
 /*------------------------------------------------------------------------------
- * Platform specific definition of how to emit text to the user. OS/400 has 
- * stdio, but it's not that nicely integrated compared to native means.
+ * Easy message sending wrapper.
  *
  * Note: Sending an *ESCAPE message has the program exit with failure.
  */
@@ -300,7 +282,7 @@ int eprintf (char *type, char *format, ...) {
 
     /* Handle format string. */
     va_start(va, format);
-    vsfprintf(buf, format, va);
+    vsprintf(buf, format, va);
     va_end(va);
 
     QMHSNDPM("CPF9897"                   /* Message identifier */
@@ -323,8 +305,6 @@ int eprintf (char *type, char *format, ...) {
     return (0);
 }
 
-#endif
-
 /*------------------------------------------------------------------------------
  * HTTP proxy host/port parsing from http_proxy variable.
  */
@@ -336,12 +316,8 @@ int parse_proxy_env(char **out_host, int *out_port) {
     size_t n, host_len;
 
 
-#ifdef __ILEC400__
     /* Envvars are UPPER CASE in OS/400. */
     env = getenv("HTTP_PROXY");
-#else
-    env = getenv("http_proxy");
-#endif
     if (!env || strlen(env) == 0) {
         eprintf("*ESCAPE", "Error: HTTP_PROXY environment variable not set.");
     }
@@ -417,11 +393,8 @@ int parse_proxy_env(char **out_host, int *out_port) {
 
 int http_get(const char *prefix, char *response, size_t response_size,
         const char *proxy_host, int proxy_port) {
-#ifdef __ILEC400__
-    char request_ascii[REQUEST_SIZE];
-#endif
-    char request[REQUEST_SIZE], response_ascii[RESPONSE_SIZE], buffer[1024],
-        *body;
+    char request_ascii[REQUEST_SIZE], request[REQUEST_SIZE],
+        response_ascii[RESPONSE_SIZE], buffer[1024], *body;
     struct sockaddr_in server_addr;
     struct hostent *server;
     int total = 0, bytes_received, sockfd;
@@ -432,10 +405,8 @@ int http_get(const char *prefix, char *response, size_t response_size,
         "User-Agent: C89-HIBP-Client/1.0\r\n" "Connection: close\r\n" "\r\n",
         HIBP_HOST, prefix, HIBP_HOST);
 
-#ifdef __ILEC400__
     convert_buffer(request, request_ascii, strlen(request), strlen(request),
         e_a_ccsid);
-#endif
 
     /* Create socket. */
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -444,11 +415,7 @@ int http_get(const char *prefix, char *response, size_t response_size,
     }
 
     /* Get host info. */
-#ifdef __ILEC400__
     server = gethostbyname((unsigned char *)proxy_host);
-#else
-    server = gethostbyname(proxy_host);
-#endif
     if (server == NULL) {
         eprintf("*ESCAPE", "Error: Could not resolve proxy host %s.",
             proxy_host);
@@ -468,11 +435,7 @@ int http_get(const char *prefix, char *response, size_t response_size,
     }
 
     /* Send request. */
-#ifdef __ILEC400__
     if (send(sockfd, request_ascii, strlen(request_ascii), 0) < 0) {
-#else
-    if (send(sockfd, request, strlen(request), 0) < 0) {
-#endif
         eprintf("*ESCAPE", "Error: send() failed: %s", strerror(errno));
     }
 
@@ -491,19 +454,15 @@ int http_get(const char *prefix, char *response, size_t response_size,
         response_ascii[total] = '\0';
     }
 
-#ifdef __ILEC400__
     /* Convert ASCII back to EBCDIC on OS/400. Otherwise copy buffer. */
     convert_buffer(response_ascii, response, strlen(response_ascii),
         strlen(response_ascii), a_e_ccsid);
-#else
-    memcpy(response, response_ascii, total);
-#endif
 
     /* Clean up. */
     close(sockfd);
 
     if (bytes_received < 0) {
-        eprintf("*ERR", "Error: receivinf response: %s", strerror(errno));
+        eprintf("*ESCAPE", "Error: receiving response: %s", strerror(errno));
     }
 
     /* Skip HTTP headers to get to body.  */
@@ -531,32 +490,20 @@ int main(int argc, char *argv[]) {
     size_t arg_len = 0;
 
 
-#ifdef __ILEC400__
     QtqCode_T jobCode = { 0, 0, 0, 0, 0, 0 };
     QtqCode_T asciiCode = { 819, 0, 0, 0, 0, 0 };
-#endif
 
     /* Parse env for proxy. */
     if (parse_proxy_env(&proxy_host, &proxy_port) != 0) {
         return (2);
     }
 
-#ifdef __ILEC400__
     /* When we use OS/400 command prompting, we need to remove excess blanks. */
     fixstr(argv[1], strlen(argv[1]));
-#else
-    /* This is already verified by the CMD. */
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <password>\n", argv[0]);
-        free(proxy_host);
-        return (1);
-    }
-#endif
 
     /* We need this later repeatedly. */
     arg_len = strlen(argv[1]);
 
-#ifdef __ILEC400__
     /* Create the conversion tables. These are used in the http handler. */
     /* ASCII to EBCDIC. */
     a_e_ccsid = QtqIconvOpen(&jobCode, &asciiCode);
@@ -575,18 +522,13 @@ int main(int argc, char *argv[]) {
     /* Convert password from EBDIC to ASCII on OS/400 to match hash values. */
     arg_ascii = malloc(arg_len + 1);
     convert_buffer(argv[1], arg_ascii, arg_len, arg_len, e_a_ccsid);
-#else
-    arg_ascii = argv[1];
-#endif
 
     /* Calculate SHA-1 hash. */
     SHA1_Init(&ctx);
     SHA1_Update(&ctx, (unsigned char *)arg_ascii, arg_len);
     SHA1_Final(hash, &ctx);
 
-#ifdef __ILEC400__
     free(arg_ascii);
-#endif
 
     /* Convert to hex string. */
     bin2hex(hash, hex_hash, SHA1_DIGEST_SIZE);
