@@ -48,26 +48,14 @@
 
 #ifdef __ILEC400__
 /* OS/400 specific defines. */
-#pragma nomargins                        /* No positional restrictions. */
-
 typedef unsigned int uint32_t;
-
 #include <qusec.h>                       /* Qus_EC_t */
 #include <qmhsndpm.h>                    /* QMHSNDPM */
 #include <qtqiconv.h>                    /* EBCDIC <=> ASCII conversion */
-#if __ILEC400_TGTVRM__ >= 430
-#include <qp0ztrc.h>                     /* Qp0zLprintf() */
-#else
-int  Qp0zLprintf (char *format, ...);    /* Not officially included in V3R2 */
-#endif
-#define ssprintf Qp0zLprintf             /* Write to job log. */
 
 #else
-
 /* For Linux and other unix lookalikes. */
 #include <stdint.h>
-
-#define ssprintf printf                  /* Write to stdout. */
 
 #endif
 
@@ -264,39 +252,6 @@ char *fixstr(char *buf, int length) {
 }
 
 /*------------------------------------------------------------------------------
- * Send a message.
- */
-
-int sendMsg(char *pMsgData) {
-    char MSGKey[4];
-    Qus_EC_t errorCode;
-
-
-    memset(&errorCode, 0, sizeof(errorCode));
-    errorCode.Bytes_Provided = sizeof(errorCode);
-
-    QMHSNDPM("CPF9897"                   /* Message identifier */
-        , "QCPFMSG   *LIBL     "         /* Qualified message file name */
-        , pMsgData                       /* Replacement data */
-        , strlen(pMsgData)               /* Length of replacement data */
-        , "*COMP     "                   /* message type */
-        , "*PGMBDY   "                   /* call stack entry to send the */
-                                         /* message */
-        , 1                              /* message queue number */
-        , MSGKey                         /* message key */
-        , &errorCode                     /* Error code feedback */
-    );
-
-    if (errorCode.Bytes_Available) {
-        ssprintf("sendMsg() - QMHSNDPM API return error='%0.7s'",
-            errorCode.Exception_Id);
-        return(1);
-    }
-
-    return (0);
-}
-
-/*------------------------------------------------------------------------------
  * Charset conversion.
  */
 
@@ -318,6 +273,56 @@ int convert_buffer(char *srcBuf, char *dstBuf, int srcBufLen, int dstBufLen,
 
     return(retval);
 }
+
+/*------------------------------------------------------------------------------
+ * Platform specific definition of how to emit text to the user. OS/400 has 
+ * stdio, but it's not that nicely integrated compared to native means.
+ *
+ * Note: Sending an *ESCAPE message has the program exit with failure.
+ */
+
+int eprintf (char *type, char *format, ...) {
+    va_list va;
+    Qus_EC_t ErrorCode;
+    char buf[10240], MsgType[10], MsgKey[4];
+    size_t MsgTypeLen, ErrorCodeLen;
+
+
+    /* Provide proper strings for the message type. */
+    MsgTypeLen = sizeof(MsgType);
+    memset(MsgType, ' ', MsgTypeLen);
+    memcpy(MsgType, type, MsgTypeLen);
+
+    /* Prepare ErrorCode receiver variable. */
+    ErrorCodeLen = sizeof(ErrorCode);
+    memset(&ErrorCode, 0, ErrorCodeLen);
+    ErrorCode.Bytes_Provided = ErrorCodeLen;
+
+    /* Handle format string. */
+    va_start(va, format);
+    vsfprintf(buf, format, va);
+    va_end(va);
+
+    QMHSNDPM("CPF9897"                   /* Message identifier */
+        , "QCPFMSG   *LIBL     "         /* Qualified message file name */
+        , buf                            /* Replacement data */
+        , strlen(buf)                    /* Length of replacement data */
+        , MsgType                        /* message type */
+        , "*PGMBDY   "                   /* call stack entry to send to */
+        , 1                              /* message queue number */
+        , MsgKey                         /* message key */
+        , &ErrorCode                     /* Error code feedback */
+    );
+
+    if (ErrorCode.Bytes_Available) {
+        printf("sendMsg() - QMHSNDPM API return error='%0.7s'",
+            ErrorCode.Exception_Id);
+        return(1);
+    }
+
+    return (0);
+}
+
 #endif
 
 /*------------------------------------------------------------------------------
@@ -338,8 +343,7 @@ int parse_proxy_env(char **out_host, int *out_port) {
     env = getenv("http_proxy");
 #endif
     if (!env || strlen(env) == 0) {
-        ssprintf("Error: HTTP_PROXY environment variable not set.\n");
-        return (-1);
+        eprintf("*ESCAPE", "Error: HTTP_PROXY environment variable not set.");
     }
 
     p = env;
@@ -363,15 +367,13 @@ int parse_proxy_env(char **out_host, int *out_port) {
     }
     host_len = host_end - host_start;
     if (host_len == 0 || host_len > 255) {
-        ssprintf("Error: Malformed http_proxy (host missing or too long).\n");
-        return (-1);
+        eprintf("*ESCAPE",
+            "Error: Malformed http_proxy (host missing or too long).");
     }
 
     *out_host = malloc(host_len + 1);
     if (!*out_host) {
-        /* FIXME: Job Log! */
-        perror("malloc");
-        return (-1);
+        eprintf("*ESCAPE", "Error: malloc failed: %s", strerror(errno));
     }
     memcpy(*out_host, host_start, host_len);
     (*out_host)[host_len] = '\0';
@@ -386,9 +388,7 @@ int parse_proxy_env(char **out_host, int *out_port) {
             port_end++;
         }
         if (port_end == port_start) {
-            ssprintf("Error: Malformed http_proxy (port missing).\n");
-            free(*out_host);
-            return (-1);
+            eprintf("*ESCAPE", "Error: Malformed http_proxy (port missing).");
         }
         n = port_end - port_start;
 
@@ -398,9 +398,8 @@ int parse_proxy_env(char **out_host, int *out_port) {
         numbuf[n] = '\0';
         port = atoi(numbuf);
         if (port < 1 || port > 65535) {
-            ssprintf("Error: Malformed http_proxy (port out of range).\n");
-            free(*out_host);
-            return (-1);
+            eprintf("*ESCAPE",
+                "Error: Malformed http_proxy (port out of range).");
         }
     } else {
         /* Default port 80 for HTTP. */
@@ -441,9 +440,7 @@ int http_get(const char *prefix, char *response, size_t response_size,
     /* Create socket. */
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
-        /* FIXME: Job Log! */
-        perror("Error creating socket");
-        return (-1);
+        eprintf("*ESCAPE", "Error: socket() failed: %s", strerror(errno));
     }
 
     /* Get host info. */
@@ -453,9 +450,8 @@ int http_get(const char *prefix, char *response, size_t response_size,
     server = gethostbyname(proxy_host);
 #endif
     if (server == NULL) {
-        ssprintf("Error: Could not resolve proxy host %s.\n", proxy_host);
-        close(sockfd);
-        return (1);
+        eprintf("*ESCAPE", "Error: Could not resolve proxy host %s.",
+            proxy_host);
     }
 
     /* Prepare the server address structure. */
@@ -467,27 +463,18 @@ int http_get(const char *prefix, char *response, size_t response_size,
     /* Connect to the server. */
     if (connect(sockfd, (struct sockaddr *)&server_addr,
             sizeof(server_addr)) < 0) {
-        /* FIXME: Job Log! */
-        perror("Error connecting to proxy server");
-        close(sockfd);
-        return (-1);
+        eprintf("*ESCAPE", "Error: cannot connect to proxy server: %s",
+            strerror(errno));
     }
 
     /* Send request. */
 #ifdef __ILEC400__
     if (send(sockfd, request_ascii, strlen(request_ascii), 0) < 0) {
-        /* FIXME: Job Log! */
-        perror("Error sending request");
-        close(sockfd);
-        return (-1);
-    }
 #else
     if (send(sockfd, request, strlen(request), 0) < 0) {
-        perror("Error sending request");
-        close(sockfd);
-        return (-1);
-    }
 #endif
+        eprintf("*ESCAPE", "Error: send() failed: %s", strerror(errno));
+    }
 
     /* Clear response buffer. */
     memset(response_ascii, 0, response_size);
@@ -516,9 +503,7 @@ int http_get(const char *prefix, char *response, size_t response_size,
     close(sockfd);
 
     if (bytes_received < 0) {
-        /* FIXME: Job Log! */
-        perror("Error receiving response");
-        return (-1);
+        eprintf("*ERR", "Error: receivinf response: %s", strerror(errno));
     }
 
     /* Skip HTTP headers to get to body.  */
@@ -577,14 +562,14 @@ int main(int argc, char *argv[]) {
     a_e_ccsid = QtqIconvOpen(&jobCode, &asciiCode);
     if (a_e_ccsid.return_value == -1) {
         iconv_close(a_e_ccsid);
-        Qp0zLprintf("Warning: QtqIconvOpen failed.");
+        eprintf("*ESCAPE", "Warning: QtqIconvOpen failed.");
     }
 
     /* EBCDIC to ASCII. */
     e_a_ccsid = QtqIconvOpen(&asciiCode, &jobCode);
     if (e_a_ccsid.return_value == -1) {
         iconv_close(e_a_ccsid);
-        Qp0zLprintf("Warning: QtqIconvOpen failed.");
+        eprintf("*ESCAPE", "Warning: QtqIconvOpen failed.");
     }
 
     /* Convert password from EBDIC to ASCII on OS/400 to match hash values. */
@@ -614,9 +599,7 @@ int main(int argc, char *argv[]) {
     /* Query API. EBCDIC/ASCII conversion on OS/400 is done in http_get(). */
     if (http_get(prefix, response, sizeof(response), proxy_host,
             proxy_port) != 0) {
-        ssprintf("Failed to query API.\n");
-        free(proxy_host);
-        return (1);
+        eprintf("*ESCAPE", "Failed to query API.\n");
     }
     free(proxy_host);
 
@@ -624,20 +607,11 @@ int main(int argc, char *argv[]) {
     found = (strstr(response, suffix) != NULL);
 
     /* Output result. */
-#ifdef __ILEC400__
-    /* Show result in msgline. */
     if (found) {
-        sendMsg("Password has been pwned.");
+        eprintf("*COMP", "Password has been pwned.\n");
     } else {
-        sendMsg("Password not found in database.");
+        eprintf("*COMP", "Password not found in database.\n");
     }
-#else
-    if (found) {
-        ssprintf("Password has been pwned.\n");
-    } else {
-        ssprintf("Password not found in database.\n");
-    }
-#endif
 
     return (0);
 }
