@@ -50,5 +50,8 @@ Depending on feedback from the API, one of two possible answers are printed in t
 - Password has been pwned.
 - Password not found in database.
 
+### Known bugs
+At the moment, using the `*cmd` object to run the application generates a wrong checksum. Meanwhile, run `call chkhibpwnd 'testthispassword'` to work around that issue.
+
 ----
-2026-01-02 poc@pocnet.net
+2026-01-12 poc@pocnet.net
